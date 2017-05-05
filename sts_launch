@@ -1,0 +1,264 @@
+CLEARSCREEN.
+PRINT " ".
+PRINT "**************************************************".
+PRINT "**                                              **".
+PRINT "**                                              **".
+PRINT "**            STS Launch-script v0.1            **".
+PRINT "**                                              **".
+PRINT "**                                              **".
+PRINT "**               (c) Fulgora 2017               **".
+PRINT "**                License: GPLv3                **".
+PRINT "**                                              **".
+PRINT "**    https://github.com/Fulgora/sts_launch     **".
+PRINT "**************************************************".
+PRINT " ".
+PRINT " ".
+
+// ******************************************************************** //
+// ********************** VARIABLE-DECLARATIONS *********************** //
+// ******************************************************************** //
+
+// Target altitude in m to start first gravity turn (90 -> 45°)
+SET gravity_turn_1 TO 1000.
+
+// Target altitude in m to start first gravity turn (45 -> 0°)
+SET gravity_turn_2 TO 15000.
+
+// Maximum target apoapsis height
+SET max_apoapsis TO 100000.
+
+// Name of the main engine that is supposed to be cut when running
+// out of gimble. (Currently set to mammoth)
+SET main_engine TO "Size3EngineCluster".
+
+SET bellyUp TO True.
+
+// ******************************************************************** //
+// *** SCRIPT - DO NOT MODIFY UNLESS YOU KNOW WHAT YOU ARE DOING ;) *** //
+// ******************************************************************** //
+
+//CLEARSCREEN.
+//printEngines().
+//WAIT 25.
+
+PRINT "Initiating launch.".
+PRINT " ".
+
+// Countdown
+PRINT "IGNITION IN... T-".
+FROM {local countdown is 10.} UNTIL countdown = 0 STEP {SET countdown to countdown - 1.} DO {
+    PRINT countdown + " " AT (17,16).
+    WAIT 1. // pauses the script here for 1 second.
+}
+PRINT 0 + " " AT (17,16).
+WAIT 0.2.
+
+// Let's roll
+
+LOCK THROTTLE TO 1.0.
+PRINT " ".
+PRINT "*** IGNITION ***".
+PRINT " ".
+STAGE.
+WAIT 0.1.
+//SAS ON.
+RCS ON.
+STAGE.
+
+PRINT "Lift-off.".
+
+SET launch_face TO 0.
+if(bellyUp) {
+    SET launch_face TO 270.
+    LOCK STEERING TO HEADING(launch_face, 90).
+} else {
+    SET launch_face TO 90.
+    LOCK STEERING TO HEADING(launch_face, 85).
+}
+
+WAIT 1.
+
+SET max_thrust_tmp TO SHIP:MAXTHRUST.
+
+UNTIL (SHIP:ALTITUDE > gravity_turn_1) {
+    IF SHIP:MAXTHRUST < max_thrust_tmp {
+        STAGE.
+    }
+    SET max_thrust_tmp TO SHIP:MAXTHRUST.
+    //WAIT 0.1. // just trying not to fry your actual (physical) CPU
+    LOCK STEERING TO HEADING(launch_face, 90).
+}
+
+PRINT "Starting gravity turn.".
+SET start_alt TO SHIP:ALTITUDE.
+UNTIL SHIP:ALTITUDE > gravity_turn_2 {
+    SET distance_to_ground TO (SHIP:ALTITUDE - start_alt).
+    SET temp TO distance_to_ground / (gravity_turn_2 - start_alt).
+    if(bellyUp) {
+        LOCK STEERING TO HEADING(launch_face, 90 + (45 * temp)).
+        PRINT ROUND(90 + (45 * temp),1) AT (40,21).
+    }
+    else {
+        LOCK STEERING TO HEADING(launch_face, 90 - (45 * temp)).
+        PRINT ROUND(90 - (45 * temp),1) AT (40,21).
+    }
+
+
+    WAIT 0.1. // just trying not to fry your actual (physical) CPU
+
+    IF SHIP:MAXTHRUST < max_thrust_tmp {
+        STAGE.
+    }
+    SET max_thrust_tmp TO SHIP:MAXTHRUST.
+}
+
+// Calculate altitude at which the gravity turn will be completed
+//SET gravity_turn_3 TO gravity_turn_2 + 2 * (gravity_turn_2 - gravity_turn_1).
+SET gravity_turn_3 TO max_apoapsis.
+
+SET start_alt TO SHIP:APOAPSIS.
+SET current_target_pitch TO 0.
+SET last_stage TO TIME:SECONDS.
+SET last_throttle TO TIME:SECONDS.
+UNTIL SHIP:APOAPSIS >= gravity_turn_3 {
+    SET distance_to_ground TO (SHIP:APOAPSIS - start_alt).
+    SET temp TO distance_to_ground / (gravity_turn_3 - start_alt).
+    if(bellyUp) {
+        SET current_target_pitch TO 135 + (45 * temp).
+        LOCK STEERING TO HEADING(launch_face, 135 + (45 * temp)).
+        PRINT ROUND(135 + (45 * temp),1) AT (40,21).
+    } else {
+        SET current_target_pitch TO 45 - (45 * temp).
+        LOCK STEERING TO HEADING(launch_face, 45 - (45 * temp)).
+        PRINT ROUND(45 - (45 * temp),1) AT (40,21).
+    }
+
+    WAIT 0.1. // just trying not to fry your actual (physical) CPU
+
+    IF SHIP:MAXTHRUST < max_thrust_tmp {
+        SET last_stage TO TIME:SECONDS.
+        STAGE.
+    }
+
+    if(bellyUp) {
+        SET tmp_pitch TO 90 + vectorangle(UP:VECTOR, SHIP:FACING:FOREVECTOR).
+    } else {
+        SET tmp_pitch TO 90 - vectorangle(UP:VECTOR, SHIP:FACING:FOREVECTOR).
+    }
+    SET pitch_diff TO tmp_pitch - current_target_pitch.
+    PRINT "Pitch-Diff: " + ROUND(pitch_diff,1) + " " AT (27,26).
+    if((pitch_diff > 1 OR pitch_diff < -1) AND last_stage < TIME:SECONDS - 2 AND last_throttle < TIME:SECONDS - 0.5) {
+        SET last_throttle TO TIME:SECONDS.
+        throttleMainEngine().
+    }
+    if(last_stage >= TIME:SECONDS - 2 AND last_throttle < TIME:SECONDS - 0.5) {
+        PRINT "Throttle: NOPE!" AT (27,27).
+    } else {
+        PRINT "Throttle: okay." AT (27,27).
+    }
+
+
+    SET max_thrust_tmp TO SHIP:MAXTHRUST.
+}
+
+PRINT "Gravity turn complete.".
+
+LOCK THROTTLE TO 0.
+SET SHIP:CONTROL:PILOTMAINTHROTTLE TO 0.
+
+WAIT 3.
+
+CLEARSCREEN.
+
+PRINT "**************************************************".
+PRINT "**                                              **".
+IF SHIP:PERIAPSIS > 70000 {
+    PRINT "**            >>> Orbit achieved <<<            **".
+    //PRINT "**                                              **".
+    IF apo_peri_distance > 1000 {
+        PRINT "**          Please circularise on your own         **".
+        //PRINT "**                                              **".
+    }
+    PRINT "**                                              **".
+}
+IF SHIP:APOAPSIS >= max_apoapsis {
+    PRINT "**       Target maximum apoapsis reached        **".
+    //PRINT "**                                              **".
+}
+
+IF SHIP:PERIAPSIS < 70000 {
+    PRINT "**                                              **".
+    PRINT "**        >>> COULD NOT REACH ORBIT <<<         **".
+    PRINT "**                                              **".
+}
+
+PRINT "**                                              **".
+PRINT "**                                              **".
+PRINT "**                                              **".
+PRINT "**           Transferring control back          **".
+PRINT "**                                              **".
+PRINT "**  I hope you had a pleasent flight (so far)   **".
+PRINT "**                     :D                       **".
+PRINT "**                      _                       **".
+PRINT "**                     / \                      **".
+PRINT "**                    |.-.|                     **".
+PRINT "**                    |   |                     **".
+PRINT "**                    |   |                     **".
+PRINT "**                    | F |                     **".
+PRINT "**                  _ | U | _                   **".
+PRINT "**                 / \| L |/ \                  **".
+PRINT "**                |   | G |   |                 **".
+PRINT "**                |   | O |   |                 **".
+PRINT "**               ,'   | R |   '.                **".
+PRINT "**             ,' |   | A |   | `.              **".
+PRINT "**           .'___|___|_ _|___|___'.            **".
+PRINT "**                 /_\ /_\ /_\                  **".
+PRINT "**            STS Launch-script v0.1            **".
+PRINT "**                                              **".
+PRINT "**    https://github.com/Fulgora/sts_launch     **".
+PRINT "**************************************************".
+PRINT " ".
+
+// In percent
+declare function getTWR
+{
+    //set mth to SHIP:MAXTHRUST. // (depends on fixed kOS issue 940
+    set mth to getMaxThrust(). // (depends on fixed kOS issue 940).
+    set r to SHIP:ALTITUDE+SHIP:BODY:RADIUS.
+    set w to SHIP:MASS * SHIP:BODY:MU / r / r.
+    //PRINT mth/w AT (1,1).
+
+    SET twr TO mth/w.
+
+    PRINT "MTH: " + mth + " -> TWR: " + twr.
+    return twr.
+}
+
+declare function throttleMainEngine
+{
+    LIST ENGINES IN engines.
+    FOR eng IN engines {
+        IF eng:Name:CONTAINS(main_engine) {
+            SET limit TO eng:THRUSTLIMIT.
+            SET eng:THRUSTLIMIT TO limit * 0.95.
+        }
+    }.
+}
+
+declare function printEngines
+{
+    LIST ENGINES IN engines.
+    FOR eng IN engines {
+        PRINT eng:Name + ": " + eng:MAXTHRUST.
+    }.
+}
+
+declare function getMaxThrust
+{
+    LIST ENGINES IN engines.
+    SET thrust to 0.
+    FOR eng IN engines {
+        SET thrust TO thrust + (eng:THRUST * eng:THRUSTLIMIT).
+    }.
+    return thrust.
+}
