@@ -19,13 +19,13 @@ PRINT " ".
 // ******************************************************************** //
 
 // Target altitude in m to start first gravity turn (90 -> 45°)
-SET gravity_turn_1 TO 1000.
+SET gravity_turn_1 TO 500.
 
 // Target altitude in m to start first gravity turn (45 -> 0°)
-SET gravity_turn_2 TO 15000.
+SET gravity_turn_2 TO 10000.
 
 // Maximum target apoapsis height
-SET max_apoapsis TO 100000.
+SET max_apoapsis TO 1000000.
 
 // Name of the main engine that is supposed to be cut when running
 // out of gimble. (Currently set to mammoth)
@@ -69,24 +69,21 @@ PRINT "Lift-off.".
 
 SET launch_face TO 0.
 if(bellyUp) {
-    SET launch_face TO 270.
-    LOCK STEERING TO HEADING(launch_face, 90).
-} else {
     SET launch_face TO 90.
-    LOCK STEERING TO HEADING(launch_face, 85).
+} else {
+    SET launch_face TO 270.
 }
-
-WAIT 1.
 
 SET max_thrust_tmp TO SHIP:MAXTHRUST.
 
 UNTIL (SHIP:ALTITUDE > gravity_turn_1) {
+    getDiffFacePrograde(up + R(0,0,launch_face) + R(0,0,0)).
     IF SHIP:MAXTHRUST < max_thrust_tmp {
         STAGE.
     }
     SET max_thrust_tmp TO SHIP:MAXTHRUST.
     //WAIT 0.1. // just trying not to fry your actual (physical) CPU
-    LOCK STEERING TO HEADING(launch_face, 90).
+    LOCK STEERING TO up + R(0,0,launch_face) + R(0,0,0).
 }
 
 PRINT "Starting gravity turn.".
@@ -95,14 +92,17 @@ UNTIL SHIP:ALTITUDE > gravity_turn_2 {
     SET distance_to_ground TO (SHIP:ALTITUDE - start_alt).
     SET temp TO distance_to_ground / (gravity_turn_2 - start_alt).
     if(bellyUp) {
-        LOCK STEERING TO HEADING(launch_face, 90 + (45 * temp)).
-        PRINT ROUND(90 + (45 * temp),1) AT (40,21).
+        SET target_vector TO up + R(0, 0, launch_face) + R(0, -45 * temp, 0).
+        getDiffFacePrograde(target_vector).
+        PRINT round(target_vector:yaw,1) AT (40,21).
+        LOCK STEERING TO target_vector.
     }
     else {
-        LOCK STEERING TO HEADING(launch_face, 90 - (45 * temp)).
-        PRINT ROUND(90 - (45 * temp),1) AT (40,21).
+        SET heading TO up + R(0, 0, launch_face) + R(0, 45 * temp, 0).
+        getDiffFacePrograde(heading).
+        PRINT round(heading:yaw,1) AT (40,21).
+        LOCK STEERING TO heading.
     }
-
 
     WAIT 0.1. // just trying not to fry your actual (physical) CPU
 
@@ -114,23 +114,66 @@ UNTIL SHIP:ALTITUDE > gravity_turn_2 {
 
 // Calculate altitude at which the gravity turn will be completed
 //SET gravity_turn_3 TO gravity_turn_2 + 2 * (gravity_turn_2 - gravity_turn_1).
-SET gravity_turn_3 TO max_apoapsis.
+SET gravity_turn_3 TO 100000.
 
 SET start_alt TO SHIP:APOAPSIS.
-SET current_target_pitch TO 0.
+SET conversion_factor  TO 0.
+SET prograde_lock TO False.
 SET last_stage TO TIME:SECONDS.
 SET last_throttle TO TIME:SECONDS.
-UNTIL SHIP:APOAPSIS >= gravity_turn_3 {
+SET initial_twist TO 0.
+SET diff_total TO 0.
+SET ang_momentum_count TO 0.
+SET ang_momentum_avg TO 0.
+SET prev_ang_momentum TO 0.
+SET initial_momentum_direction TO 0.
+SET prev_diff TO -1.
+UNTIL SHIP:APOAPSIS >= max_apoapsis {
+    PRINT round(SHIP:ANGULARMOMENTUM:x,1) + " - " + round(ang_momentum_avg,1) AT (10,33).
     SET distance_to_ground TO (SHIP:APOAPSIS - start_alt).
     SET temp TO distance_to_ground / (gravity_turn_3 - start_alt).
+    SET target_vector TO up + R(0, 0, launch_face).
     if(bellyUp) {
-        SET current_target_pitch TO 135 + (45 * temp).
-        LOCK STEERING TO HEADING(launch_face, 135 + (45 * temp)).
-        PRINT ROUND(135 + (45 * temp),1) AT (40,21).
+        SET target_vector TO up + R(0, 0, launch_face) + R(0, -45 - (45 * temp), 0).
+        PRINT ROUND(target_vector:yaw,1) AT (40,20).
+        SET diff TO adjustTargetPitch(target_vector, bellyUp).
+
+        PRINT ROUND(conversion_factor,1) AT (40,19).
+        PRINT ROUND(diff,1) AT (40,18).
+        if(diff <> 0 OR conversion_factor > 0) {
+            SET diff_total TO diff_total + conversion_factor * diff * -1.
+            SET target_vector TO target_vector + R(0, 0, 0) + R(0, diff_total, 0).
+
+            // If turning the wrong way invert the turning direction
+            if(getDiffTargetPrograde(target_vector) > diff) {
+                SET diff_total TO diff_total + conversion_factor * diff.
+                SET target_vector TO target_vector + R(0, 0, 0) + R(0, diff_total, 0).
+            }
+
+            if(conversion_factor < 1) {
+                SET conversion_factor TO conversion_factor + 0.0001.
+            }
+        }
+
+
+
+        if(prograde_lock OR (getDiffFacePrograde(target_vector) > -0.5 AND getDiffFacePrograde(target_vector) < 0.5 AND conversion_factor > 0)) {
+            //LOCK STEERING TO SHIP:PROGRADE.
+            PRINT "Converging completed... " AT (20,34).
+            SET prgd_lock TO SHIP:PROGRADE + R(0, 0, 180).
+            LOCK STEERING TO prgd_lock.
+            SET prograde_lock TO True.
+        } else {
+            LOCK STEERING TO target_vector.
+        }
+
+        PRINT ROUND(target_vector:yaw,1) AT (40,21).
     } else {
         SET current_target_pitch TO 45 - (45 * temp).
-        LOCK STEERING TO HEADING(launch_face, 45 - (45 * temp)).
-        PRINT ROUND(45 - (45 * temp),1) AT (40,21).
+        SET current_target_pitch TO adjustTargetPitch(current_target_pitch, bellyUp).
+
+        LOCK STEERING TO up + R(0,0,180) + R(0,current_target_pitch,0).
+        PRINT ROUND(current_target_pitch,1) AT (40,21).
     }
 
     WAIT 0.1. // just trying not to fry your actual (physical) CPU
@@ -140,23 +183,43 @@ UNTIL SHIP:APOAPSIS >= gravity_turn_3 {
         STAGE.
     }
 
-    if(bellyUp) {
-        SET tmp_pitch TO 90 + vectorangle(UP:VECTOR, SHIP:FACING:FOREVECTOR).
-    } else {
-        SET tmp_pitch TO 90 - vectorangle(UP:VECTOR, SHIP:FACING:FOREVECTOR).
+    SET pitch_diff TO vectorangle(SHIP:FACING:FOREVECTOR, target_vector:vector).
+    if(prograde_lock) {
+        SET pitch_diff TO getDiffFacePrograde(target_vector).
     }
-    SET pitch_diff TO tmp_pitch - current_target_pitch.
-    PRINT "Pitch-Diff: " + ROUND(pitch_diff,1) + " " AT (27,26).
-    if((pitch_diff > 1 OR pitch_diff < -1) AND last_stage < TIME:SECONDS - 2 AND last_throttle < TIME:SECONDS - 0.5) {
-        SET last_throttle TO TIME:SECONDS.
-        throttleMainEngine().
-    }
+
+    SET allowThrottle TO True.
     if(last_stage >= TIME:SECONDS - 2 AND last_throttle < TIME:SECONDS - 0.5) {
+        SET allowThrottle TO False.
         PRINT "Throttle: NOPE!" AT (27,27).
     } else {
         PRINT "Throttle: okay." AT (27,27).
     }
 
+    PRINT "Pitch-Diff: " + ROUND(pitch_diff,1) + "  " AT (27,26).
+    if((pitch_diff <= 0.5 AND pitch_diff >= 0.3) OR (pitch_diff >= -0.5 AND pitch_diff <= -0.3)) {
+        SET tmp_ang_mom TO ang_momentum_avg * ang_momentum_count.
+        SET tmp_ang_mom TO tmp_ang_mom + ABS(SHIP:ANGULARMOMENTUM:x).
+        SET ang_momentum_avg TO tmp_ang_mom / (ang_momentum_count + 1).
+        SET ang_momentum_count TO ang_momentum_count + 1.
+    }
+
+    // AND prev_ang_momentum < ABS(SHIP:ANGULARMOMENTUM:x)
+    if(ABS(SHIP:ANGULARMOMENTUM:x) > ang_momentum_avg * 2 AND allowThrottle) {
+        if initial_momentum_direction = 0 {
+            if SHIP:ANGULARMOMENTUM:x > 0 {
+                SET initial_momentum_direction TO 1.
+            } else {
+                SET initial_momentum_direction TO -1.
+            }
+        }
+        SET tmp_momentum TO initial_momentum_direction * SHIP:ANGULARMOMENTUM:x.
+        throttleMainEngine(tmp_momentum > 0).
+    } else {
+        PRINT "[o]" AT (45,27).
+    }
+
+    SET prev_ang_momentum TO ABS(SHIP:ANGULARMOMENTUM:x).
 
     SET max_thrust_tmp TO SHIP:MAXTHRUST.
 }
@@ -165,6 +228,7 @@ PRINT "Gravity turn complete.".
 
 LOCK THROTTLE TO 0.
 SET SHIP:CONTROL:PILOTMAINTHROTTLE TO 0.
+SAS ON.
 
 WAIT 3.
 
@@ -236,11 +300,20 @@ declare function getTWR
 
 declare function throttleMainEngine
 {
+    DECLARE PARAMETER direction.
+    SET throttle_adjustment TO 0.02.
+    if(direction) {
+        SET throttle_adjustment TO throttle_adjustment * -1.
+        PRINT "[-]" AT (45,27).
+    } else {
+        PRINT "[+]" AT (45,27).
+    }
+
     LIST ENGINES IN engines.
     FOR eng IN engines {
         IF eng:Name:CONTAINS(main_engine) {
-            SET limit TO eng:THRUSTLIMIT.
-            SET eng:THRUSTLIMIT TO limit * 0.95.
+            SET limit TO eng:THRUSTLIMIT * (1 + throttle_adjustment).
+            SET eng:THRUSTLIMIT TO limit.
         }
     }.
 }
@@ -261,4 +334,59 @@ declare function getMaxThrust
         SET thrust TO thrust + (eng:THRUST * eng:THRUSTLIMIT).
     }.
     return thrust.
+}
+
+declare function getDiffFacePrograde
+{
+    DECLARE PARAMETER target_vector_01.
+    //SET prograde TO 90 - vectorangle(UP:VECTOR, SHIP:PROGRADE:FOREVECTOR).
+    //set pitch TO prograde:roll.
+    //SET facing TO 90 - vectorangle(UP:VECTOR, heading:FOREVECTOR).
+    //SET fp TO heading:yaw.
+    //SET diff TO vectorangle(SHIP:FACING:FOREVECTOR, heading:vector).
+    SET diffFacePrograde TO getDiffTargetPrograde(target_vector_01) - getDiffTargetFacing(target_vector_01).
+
+    //PRINT "Prograde-Pitch: " + pitch AT (0,30).
+    //PRINT "Facing  -Pitch: " + fp AT (0,31).
+    PRINT "Diff Facing-Prograde: " + round(diffFacePrograde,1) AT (0,32).
+
+    return diffFacePrograde.
+}
+
+declare function getDiffTargetFacing
+{
+    DECLARE PARAMETER target_vector_02.
+    SET diffTargetFacing TO vectorangle(SHIP:FACING:FOREVECTOR, target_vector_02:vector).
+    PRINT "Diff Target-Facing: " + round(diffTargetFacing,1) AT (0,31).
+    return diffTargetFacing.
+}
+
+declare function getDiffTargetPrograde
+{
+    DECLARE PARAMETER target_vector_03.
+    SET prgd_tmp TO SHIP:PROGRADE.
+    if(SHIP:ALTITUDE) {
+       SET prgd_tmp TO SHIP:SRFPROGRADE.
+    }
+
+    SET diffTargetPrograde TO vectorangle(prgd_tmp:FOREVECTOR, target_vector_03:vector).
+    PRINT "Diff Target-Prograde: " + round(diffTargetPrograde,1) AT (0,30).
+    return diffTargetPrograde.
+}
+
+declare function adjustTargetPitch
+{
+    DECLARE PARAMETER target_vector_04, bellyUp.
+    SET prgDiff TO 0.
+    SET prgDiff_tmp TO getDiffTargetPrograde(target_vector_04).
+    IF(SHIP:APOAPSIS > 40000 AND ETA:APOAPSIS > 50) {
+        //SET prgDiff TO getTargetPitchDiffToPrograde(current_target_pitch, bellyUp).
+        //SET prgDiff TO tmpPrgDiff_1:yaw - tmpPrgDiff_2:x.
+        SET prgDiff TO prgDiff_tmp.
+        PRINT "Converging to prograde..." AT (20,35).
+    }
+
+    //PRINT "Tgt <-> Prgd: " + round(prgDiff_tmp,1) AT (0,35).
+
+    return prgDiff.
 }
