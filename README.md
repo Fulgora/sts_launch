@@ -1,5 +1,7 @@
 # KSP|kOS-Script for my STS Shuttle series
-This should / might work with other shuttle systems as well... I am not liable for any explosions that might result from the usage of this script. ;-)
+This should / might work with other shuttle systems as well... I am not liable for any explosions that might result from the usage of this script though.
+<br />
+;-)
 <br />
 <br />
 KSP-Mod required (you can also install it via CKAN):<br />
