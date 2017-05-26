@@ -4,6 +4,9 @@ This should / might work with other shuttle systems as well... I am not liable f
 ;-)
 <br />
 <br />
+#####Note: Currently the script is set to a 25° inclination (for STS 3 mission)
+<br />
+<br />
 KSP-Mod required (you can also install it via CKAN):<br />
 https://github.com/KSP-KOS/KOS<br />
 <br />
