@@ -36,4 +36,5 @@ This runs the script on your ship while it is stored on the 'harddrive' in the K
 #### Tested with:
 ###### v0.1:
 - [STS Launch System 3 - STS 1+2](https://kerbalx.com/Fulgora/STS-Launch-System-3---STS-1+2) [KSP 1.2.2]
+- [STS Launch System 3 - STS 3] (https://kerbalx.com/Fulgora/STS-Launch-System-3---STS-3) [KSP 1.2.2]
 
