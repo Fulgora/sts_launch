@@ -3,7 +3,7 @@ PRINT " ".
 PRINT "**************************************************".
 PRINT "**                                              **".
 PRINT "**                                              **".
-PRINT "**            STS Launch-script v0.1            **".
+PRINT "**            STS Launch-script v0.2            **".
 PRINT "**                                              **".
 PRINT "**                                              **".
 PRINT "**               (c) Fulgora 2017               **".
@@ -25,7 +25,7 @@ SET gravity_turn_1 TO 500.
 SET gravity_turn_2 TO 10000.
 
 // Maximum target apoapsis height
-SET max_apoapsis TO 2868000.
+SET max_apoapsis TO 550000.
 
 // Name of the main engine that is supposed to be cut when running
 // out of gimble. (Currently set to mammoth)
@@ -34,7 +34,8 @@ SET main_engine TO "Size3EngineCluster".
 // Do not change this one - code is (currently) not working when not launching 'backwards'
 SET bellyUp TO True.
 
-SET inclination TO 0.
+SET launchpad_orientation TO 22.5.
+SET inclination TO 25.
 
 // ******************************************************************** //
 // *** SCRIPT - DO NOT MODIFY UNLESS YOU KNOW WHAT YOU ARE DOING ;) *** //
@@ -75,14 +76,21 @@ if(bellyUp) {
 
 SET max_thrust_tmp TO SHIP:MAXTHRUST.
 
+SET launch_height TO SHIP:ALTITUDE.
+
 UNTIL (SHIP:ALTITUDE > gravity_turn_1) {
     getDiffFacePrograde(up + R(0,0,launch_face) + R(0,0,0)).
     IF SHIP:MAXTHRUST < max_thrust_tmp {
         STAGE.
     }
     SET max_thrust_tmp TO SHIP:MAXTHRUST.
-    //WAIT 0.1. // just trying not to fry your actual (physical) CPU
-    LOCK STEERING TO up + R(0,0,launch_face) + R(0,0,0).
+    SET current_orientation TO (SHIP:ALTITUDE / gravity_turn_1) * (inclination - launchpad_orientation).
+    if(SHIP:ALTITUDE < launch_height + 50) {
+        SET current_orientation TO 0.
+    }
+    LOCK STEERING TO up + R(0,0,(launch_face + inclination) - launchpad_orientation - current_orientation) + R(0,0,0).
+
+    WAIT 0.1. // just trying not to fry your actual (physical) CPU
 }
 
 PRINT "Starting gravity turn.".
@@ -155,7 +163,7 @@ UNTIL SHIP:APOAPSIS >= max_apoapsis {
 
 
 
-        if(prograde_lock OR (getDiffFacePrograde(target_vector) > -0.5 AND getDiffFacePrograde(target_vector) < 0.5 AND conversion_factor > 0)) {
+        if(prograde_lock OR (getDiffFacePrograde(target_vector) > -2 AND getDiffFacePrograde(target_vector) < 2 AND conversion_factor > 0)) {
             //LOCK STEERING TO SHIP:PROGRADE.
             PRINT "Converging completed... " AT (20,34).
             SET prgd_lock TO SHIP:PROGRADE + R(0, 0, 180).
@@ -274,7 +282,7 @@ PRINT "**               ,'   | R |   '.                **".
 PRINT "**             ,' |   | A |   | `.              **".
 PRINT "**           .'___|___|_ _|___|___'.            **".
 PRINT "**                 /_\ /_\ /_\                  **".
-PRINT "**            STS Launch-script v0.1            **".
+PRINT "**            STS Launch-script v0.2            **".
 PRINT "**                                              **".
 PRINT "**    https://github.com/Fulgora/sts_launch     **".
 PRINT "**************************************************".
