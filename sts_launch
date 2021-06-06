@@ -3,10 +3,10 @@ PRINT " ".
 PRINT "**************************************************".
 PRINT "**                                              **".
 PRINT "**                                              **".
-PRINT "**            STS Launch-script v0.2            **".
+PRINT "**            STS Launch-script v0.3            **".
 PRINT "**                                              **".
 PRINT "**                                              **".
-PRINT "**               (c) Fulgora 2017               **".
+PRINT "**               (c) Fulgora 2021               **".
 PRINT "**                License: GPLv3                **".
 PRINT "**                                              **".
 PRINT "**    https://github.com/Fulgora/sts_launch     **".
@@ -18,35 +18,76 @@ PRINT " ".
 // ********************** VARIABLE-DECLARATIONS *********************** //
 // ******************************************************************** //
 
+// Set a global time (UTC) at which the shuttle will be launched.
+// This is useful when launching multiple crafts at once as well as when
+// trying to hit a launch window very precisely.
+// Note: currenly NO auto-warp to launch is implemented!
+// Default is False
+SET use_launch_time TO False.
+SET launch_time TO TIMESTAMP(0,321,5,8,0).
+
 // Target altitude in m to start first gravity turn (90 -> 45°)
+// Default for max payload is 500
 SET gravity_turn_1 TO 500.
 
 // Target altitude in m to start first gravity turn (45 -> 0°)
-SET gravity_turn_2 TO 10000.
+// Default for max payload is 15000
+SET gravity_turn_2 TO 15000.
 
 // Maximum target apoapsis height
-SET max_apoapsis TO 550000.
+// Default for max payload is 75000 (do not set below 75000!)
+SET max_apoapsis TO 100000.
 
-// Name of the main engine that is supposed to be cut when running
-// out of gimble. (Currently set to mammoth)
+// Maximum pitch compensation for low TWR (max degrees from Prograde)
+// Default for max payload is 17
+SET max_pitch_compensation TO 1.
+
+// Name of the main engine that is supposed to be throttled when running
+// out of gimble. (Currently set to mammoth, only needed for Buran-style crafts)
+// Default is False
+SET use_engine_throttle TO False.
 SET main_engine TO "Size3EngineCluster".
 
 // Do not change this one - code is (currently) not working when not launching 'backwards'
 SET bellyUp TO True.
 
-SET launchpad_orientation TO 22.5.
-SET inclination TO 25.
+// Default is 0
+SET launchpad_orientation TO 0.
+// Default is 0
+SET inclination TO 0.
 
 // ******************************************************************** //
 // *** SCRIPT - DO NOT MODIFY UNLESS YOU KNOW WHAT YOU ARE DOING ;) *** //
 // ******************************************************************** //
 
-PRINT "Initiating launch.".
+// Collect staging information for stage 0.
+SET stage_0_engines TO get_stage_0_engines().
+SET stage_0_separators TO get_stage_0_separators().
+SET stage_0_clamps TO get_stage_0_clamps().
+SET stage_1_engines TO get_stage_0_engines().
+SET stage_1_separators TO get_stage_1_separators().
+SET stage_1_dropped TO False.
+
+// Get ships solid fuel resource object for stage 1 calculations
+FOR RES IN SHIP:RESOURCES {
+    IF RES:NAME = "solidfuel" {
+        SET solid_fuel_resource TO RES.
+    }
+}
+
+SET countdown_start TO 10.
+IF use_launch_time {
+    // Substract 10 seconds from wait time because of the countdown.
+    SET wait_time TO launch_time - TIME() - TIMESTAMP(0,0,0,0,10).
+    SET countdown_start TO FLOOR(wait_time:SECONDS).
+    WAIT wait_time:SECONDS - countdown_start.
+}
+PRINT "Initiating launch in " + countdown_start + " seconds.".
 PRINT " ".
 
 // Countdown
 PRINT "IGNITION IN... T-".
-FROM {local countdown is 10.} UNTIL countdown = 0 STEP {SET countdown to countdown - 1.} DO {
+FROM {local countdown is countdown_start.} UNTIL countdown = 0 STEP {SET countdown to countdown - 1.} DO {
     PRINT countdown + " " AT (17,16).
     WAIT 1. // pauses the script here for 1 second.
 }
@@ -59,11 +100,7 @@ LOCK THROTTLE TO 1.0.
 PRINT " ".
 PRINT "*** IGNITION ***".
 PRINT " ".
-STAGE.
-WAIT 0.1.
-//SAS ON.
-RCS ON.
-STAGE.
+stage_0(stage_0_engines, stage_0_separators, stage_0_clamps).
 
 PRINT "Lift-off.".
 
@@ -80,8 +117,8 @@ SET launch_height TO SHIP:ALTITUDE.
 
 UNTIL (SHIP:ALTITUDE > gravity_turn_1) {
     getDiffFacePrograde(up + R(0,0,launch_face) + R(0,0,0)).
-    IF SHIP:MAXTHRUST < max_thrust_tmp {
-        STAGE.
+    IF stage_1_dropped = False {
+        SET stage_1_dropped TO ensure_safe_staging(stage_1_engines, stage_1_separators, solid_fuel_resource).
     }
     SET max_thrust_tmp TO SHIP:MAXTHRUST.
     SET current_orientation TO (SHIP:ALTITUDE / gravity_turn_1) * (inclination - launchpad_orientation).
@@ -92,6 +129,7 @@ UNTIL (SHIP:ALTITUDE > gravity_turn_1) {
 
     WAIT 0.1. // just trying not to fry your actual (physical) CPU
 }
+RCS OFF.
 
 PRINT "Starting gravity turn.".
 SET start_alt TO SHIP:ALTITUDE.
@@ -113,19 +151,18 @@ UNTIL SHIP:ALTITUDE > gravity_turn_2 {
 
     WAIT 0.1. // just trying not to fry your actual (physical) CPU
 
-    IF SHIP:MAXTHRUST < max_thrust_tmp {
-        STAGE.
+    IF stage_1_dropped = False {
+        SET stage_1_dropped TO ensure_safe_staging(stage_1_engines, stage_1_separators, solid_fuel_resource).
     }
     SET max_thrust_tmp TO SHIP:MAXTHRUST.
 }
 
 // Calculate altitude at which the gravity turn will be completed
-SET gravity_turn_3 TO 100000.
+SET gravity_turn_3 TO 75000.
 
 SET start_alt TO SHIP:APOAPSIS.
 SET conversion_factor  TO 0.
 SET prograde_lock TO False.
-SET last_stage TO TIME:SECONDS.
 SET last_throttle TO TIME:SECONDS.
 SET initial_twist TO 0.
 SET diff_total TO 0.
@@ -134,13 +171,20 @@ SET ang_momentum_avg TO 0.
 SET prev_ang_momentum TO 0.
 SET initial_momentum_direction TO 0.
 SET prev_diff TO -1.
+SET last_time_to_apo_1 TO ETA:Apoapsis.
+SET last_time_to_apo_2 TO ETA:Apoapsis.
+SET low_trust_compensation TO 0.
 UNTIL SHIP:APOAPSIS >= max_apoapsis {
     PRINT round(SHIP:ANGULARMOMENTUM:x,1) + " - " + round(ang_momentum_avg,1) AT (10,33).
     SET distance_to_ground TO (SHIP:APOAPSIS - start_alt).
     SET temp TO distance_to_ground / (gravity_turn_3 - start_alt).
     SET target_vector TO up + R(0, 0, launch_face).
+    SET low_trust_compensation TO get_pitch_compensation(low_trust_compensation, last_time_to_apo_1, last_time_to_apo_2).
+    PRINT ROUND(low_trust_compensation,1) AT (27,27).
+    SET last_time_to_apo_2 TO last_time_to_apo_1.
+    SET last_time_to_apo_1 TO ETA:Apoapsis.
     if(bellyUp) {
-        SET target_vector TO up + R(0, 0, launch_face) + R(0, -45 - (45 * temp), 0) - R(inclination, 0, 0).
+        SET target_vector TO up + R(0, 0, launch_face) + R(0, -45 - (45 * temp) + low_trust_compensation, 0) - R(inclination, 0, 0).
         PRINT ROUND(target_vector:yaw,1) AT (40,20).
         SET diff TO adjustTargetPitch(target_vector, bellyUp).
 
@@ -161,12 +205,10 @@ UNTIL SHIP:APOAPSIS >= max_apoapsis {
             }
         }
 
-
-
         if(prograde_lock OR (getDiffFacePrograde(target_vector) > -2 AND getDiffFacePrograde(target_vector) < 2 AND conversion_factor > 0)) {
             //LOCK STEERING TO SHIP:PROGRADE.
             PRINT "Converging completed... " AT (20,34).
-            SET prgd_lock TO SHIP:PROGRADE + R(0, 0, 180).
+            SET prgd_lock TO SHIP:PROGRADE + R(0, low_trust_compensation, 180).
             LOCK STEERING TO prgd_lock.
             SET prograde_lock TO True.
         } else {
@@ -184,9 +226,8 @@ UNTIL SHIP:APOAPSIS >= max_apoapsis {
 
     WAIT 0.1. // just trying not to fry your actual (physical) CPU
 
-    IF SHIP:MAXTHRUST < max_thrust_tmp {
-        SET last_stage TO TIME:SECONDS.
-        STAGE.
+    IF stage_1_dropped = False {
+        SET stage_1_dropped TO ensure_safe_staging(stage_1_engines, stage_1_separators, solid_fuel_resource).
     }
 
     SET pitch_diff TO vectorangle(SHIP:FACING:FOREVECTOR, target_vector:vector).
@@ -195,12 +236,6 @@ UNTIL SHIP:APOAPSIS >= max_apoapsis {
     }
 
     SET allowThrottle TO True.
-    if(last_stage >= TIME:SECONDS - 2 AND last_throttle < TIME:SECONDS - 0.5) {
-        SET allowThrottle TO False.
-        PRINT "Throttle: NOPE!" AT (27,27).
-    } else {
-        PRINT "Throttle: okay." AT (27,27).
-    }
 
     PRINT "Pitch-Diff: " + ROUND(pitch_diff,1) + "  " AT (27,26).
     if(pitch_diff <= 0.5 AND pitch_diff >= -0.5) {
@@ -219,7 +254,9 @@ UNTIL SHIP:APOAPSIS >= max_apoapsis {
             }
         }
         SET tmp_momentum TO initial_momentum_direction * SHIP:ANGULARMOMENTUM:x.
-        throttleMainEngine(tmp_momentum > 0).
+        if(use_engine_throttle) {
+            throttleMainEngine(tmp_momentum > 0).
+        }
     } else {
         PRINT "[o]" AT (45,27).
     }
@@ -282,7 +319,7 @@ PRINT "**               ,'   | R |   '.                **".
 PRINT "**             ,' |   | A |   | `.              **".
 PRINT "**           .'___|___|_ _|___|___'.            **".
 PRINT "**                 /_\ /_\ /_\                  **".
-PRINT "**            STS Launch-script v0.2            **".
+PRINT "**            STS Launch-script v0.3            **".
 PRINT "**                                              **".
 PRINT "**    https://github.com/Fulgora/sts_launch     **".
 PRINT "**************************************************".
@@ -379,4 +416,197 @@ declare function adjustTargetPitch
     }
 
     return prgDiff.
+}
+
+declare function ensure_safe_staging
+{
+    DECLARE PARAMETER stage_1_engines, stage_1_separators, solid_fuel_resource.
+    IF (solid_fuel_resource:AMOUNT < 5000 AND solid_fuel_resource:AMOUNT > 0) {
+        RCS ON.
+    }
+    IF (SHIP:MAXTHRUST < max_thrust_tmp AND solid_fuel_resource:AMOUNT < 100) {
+        stage_1(stage_1_engines, stage_1_separators).
+        switch_controlpoint().
+        WAIT 1.
+        RCS OFF.
+        return True.
+    }
+    return False.
+}
+
+declare function get_pitch_compensation
+{
+    DECLARE PARAMETER low_trust_compensation, last_time_to_apo_1, last_time_to_apo_2.
+    IF (ETA:Apoapsis > 120 and low_trust_compensation = 0 OR ETA:Apoapsis > 600) {
+        return 0.
+    }
+    IF (ETA:Apoapsis < last_time_to_apo_1) {
+        IF (low_trust_compensation = 0) {
+            // Start at half of max_pitch_compensation to avoid high AoA right after max Q
+            // The else branch will slowly increase the compensation until max_pitch_compensation.
+            // This value is also very beneficial for launches with light payloads as the profile in
+            // that case doesn't need much TWR compensation.
+            return max_pitch_compensation / 2.
+        } ELSE {
+            SET tta_diff_1 TO last_time_to_apo_2 - last_time_to_apo_1.
+            SET tta_diff_2 TO last_time_to_apo_1 - ETA:Apoapsis.
+            PRINT ROUND(tta_diff_1,5) AT (27,28).
+            PRINT ROUND(tta_diff_2,5) AT (27,29).
+            IF (tta_diff_1 > tta_diff_2 * 0.95) {
+                // Increase compensation if the we are not slowing down on the time lost to apo
+                PRINT "+" AT (38,27).
+                // If we are only losing 0.3 seconds per second to apo we can decrease the pitch compensation.
+                // Using the average of the last two cycles to smooth out the curve
+                SET compensation_limit TO MIN(max_pitch_compensation * (((tta_diff_2 + tta_diff_1) / 2) / 0.05), max_pitch_compensation).
+                // Using the average between the current compensation and the newly calculated as max value - again to smoothen things
+                return MIN(low_trust_compensation * 1.005, (compensation_limit + low_trust_compensation * 3) / 4).
+            } ELSE {
+                // If we are slowing down its ok and we can keep the current compensation
+                PRINT "-" AT (38,27).
+                return low_trust_compensation * 0.995.
+            }
+        }
+    } ELSE {
+        PRINT "-" AT (38,27).
+        return low_trust_compensation * 0.995.
+    }
+}
+
+declare function switch_controlpoint
+{
+    FOR P IN SHIP:PARTS {
+        IF (P:NAME = "probeCoreOcto2.v2" AND P:STAGE = 4) {
+            FOR module in P:MODULES {
+                IF (P:HASMODULE(module) and module = "ModuleCommand") {
+                    P:GETMODULE(module):DOACTION("control from here", True).
+                }
+            }
+        }
+    }.
+}
+
+declare function get_stage_0_engines
+{
+    SET stage_0_engines TO list().
+    FOR P IN SHIP:PARTS {
+        // radialEngineMini.v2 - Spider
+        // radialLiquidEngine1-2 - Thud
+        // nuclearEngine - Nerv
+        // SSME - Vector
+        // Thoroughbred - Thoroughbred
+        // Clydesdale - Clydesdale
+        IF (P:NAME = "radialEngineMini.v2" or
+            P:NAME = "radialLiquidEngine1-2" or
+            P:NAME = "nuclearEngine" or
+            P:NAME = "SSME" or
+            P:NAME = "Thoroughbred" or
+            P:NAME = "Clydesdale") {
+            FOR module in P:MODULES {
+                FOR module in P:MODULES {
+                    IF (P:HASMODULE(module) and module = "ModuleEnginesFX") {
+                        stage_0_engines:ADD(P:GETMODULE(module)).
+                    }
+                }
+            }
+        }
+    }
+    return stage_0_engines.
+}
+
+declare function get_stage_0_separators
+{
+    SET stage_0_separators TO list().
+    FOR P IN SHIP:PARTS {
+        // radialDecoupler2 - Large Decoupler
+        IF (P:NAME = "radialDecoupler2" or P:NAME = "launchClamp1") {    
+            FOR module in P:MODULES {
+                IF (P:NAME = "radialDecoupler2" AND P:CHILDREN[0]:NAME = "mk2.1m.AdapterLong" AND P:HASMODULE(module) AND module = "ModuleAnchoredDecoupler") {
+                    stage_0_separators:ADD(P:GETMODULE(module)).
+                }
+            }
+        }
+    }
+    return stage_0_separators.
+}
+
+declare function get_stage_0_clamps
+{
+    SET stage_0_clamps TO list().
+    FOR P IN SHIP:PARTS {
+        // launchClamp1 - launch clamp (duh!)
+        IF (P:NAME = "radialDecoupler2" or P:NAME = "launchClamp1") {    
+            FOR module in P:MODULES {
+                IF (P:HASMODULE(module) and module = "LaunchClamp") {
+                    stage_0_clamps:ADD(P:GETMODULE(module)).
+                }
+            }
+        }
+    }
+    return stage_0_clamps.
+}
+
+declare function get_stage_1_engines
+{
+    SET stage_1_engines TO list().
+    FOR P IN SHIP:PARTS {
+        // sepMotor1 - Sepatron I
+        IF (P:NAME = "sepMotor1") {
+            FOR module in P:MODULES {
+                FOR module in P:MODULES {
+                    IF (P:HASMODULE(module) and module = "ModuleEnginesFX") {
+                        stage_1_engines:ADD(P:GETMODULE(module)).
+                    }
+                }
+            }
+        }
+    }
+    return stage_1_engines. 
+}
+
+declare function get_stage_1_separators
+{
+    SET stage_1_separators TO list().
+    FOR P IN SHIP:PARTS {
+        // radialDecoupler2 - Large Decoupler
+        IF (P:NAME = "radialDecoupler2") {
+            FOR module in P:MODULES {
+                IF (P:NAME = "radialDecoupler2" AND P:PARENT:NAME = "Size3LargeTank" AND P:HASMODULE(module) AND module = "ModuleAnchoredDecoupler") {
+                    FOR child in P:CHILDREN {
+                        IF child:NAME = "Clydesdale" {
+                            stage_1_separators:ADD(P:GETMODULE(module)).
+                        }
+                        BREAK.
+                    }
+                }
+            }
+        }
+    }
+    return stage_1_separators.
+}
+
+
+declare function stage_0
+{
+    DECLARE PARAMETER stage_0_engines, stage_0_separators, stage_0_clamps.
+    RCS ON.
+    FOR P in stage_0_engines {
+        P:DOACTION("activate engine", True).
+    }
+    FOR P in stage_0_separators {
+        P:DOACTION("decouple", True).
+    }
+    FOR P in stage_0_clamps {
+        P:DOACTION("release clamp", True).
+    }
+}
+
+declare function stage_1
+{
+    DECLARE PARAMETER stage_1_engines, stage_1_separators.
+    FOR P in stage_1_engines {
+        P:DOACTION("activate engine", True).
+    }
+    FOR P in stage_1_separators {
+        P:DOACTION("decouple", True).
+    }
 }
