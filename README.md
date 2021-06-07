@@ -4,24 +4,22 @@ This should / might work with other shuttle systems as well... I am not liable f
 ;-)
 <br />
 <br />
-###### Note: Currently the script is set to a 25° inclination (for STS 3 mission)
-<br />
 <br />
 KSP-Mod required (you can also install it via CKAN):<br />
 https://github.com/KSP-KOS/KOS<br />
 <br />
-(written for kOS v 1.0.3)
+(written for kOS v 1.3.2)
 <br />
 <br />
 File location (just the file 'sts_launch', not the .zip version of the repo!):<br />
 Kerbal Space Program\Ships\Script
 
 ## Usage:
-Open the script with any text-editor of your choice (I recommend notepad++ or atom)
-Adjust any parameters in the script you like to change (apoapsis, inclinations...)
+Open the script with any text-editor of your choice (I recommend Visual Studio Code)
+Adjust any parameters in the script you like to change (apoapsis, inclination...)
 
 Then open the terminal: Click on the kOS mod icon and then click the computer icon in the window that pops up.
-I am using kOS for All mod in the video and click on the MK-3 Crew cabin -> Open Terminal
+If you use the "kOS for all" mod you may also right-click on the MK-3 Crew cabin -> Open Terminal
 
 #### Launch the shuttle:
 Type in the terminal:
@@ -38,4 +36,8 @@ This runs the script on your ship while it is stored on the 'harddrive' in the K
 - [STS Launch System 3 - STS 1+2](https://kerbalx.com/Fulgora/STS-Launch-System-3---STS-1+2) [KSP 1.2.2]
 ###### v0.2:
 - [STS Launch System 3 - STS 3](https://kerbalx.com/Fulgora/STS-Launch-System-3---STS-3) [KSP 1.2.2]
+###### v0.3:
+- [STS Launch System 4 - STS Mun-2](https://kerbalx.com/Fulgora/STS-v4-STS-Mun-2) [KSP 1.10.1]
+- [STS Launch System 4 - STS Mun-3](https://kerbalx.com/Fulgora/STS-v4-STS-Mun-3) [KSP 1.10.1]
+- [STS Launch System 4 - STS Mun-4](https://kerbalx.com/Fulgora/STS-v4-STS-Mun-4) [KSP 1.10.1]
 
