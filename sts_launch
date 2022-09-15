@@ -3,7 +3,7 @@ PRINT " ".
 PRINT "**************************************************".
 PRINT "**                                              **".
 PRINT "**                                              **".
-PRINT "**            STS Launch-script v0.3            **".
+PRINT "**            STS Launch-script v0.4            **".
 PRINT "**                                              **".
 PRINT "**                                              **".
 PRINT "**               (c) Fulgora 2021               **".
@@ -11,7 +11,6 @@ PRINT "**                License: GPLv3                **".
 PRINT "**                                              **".
 PRINT "**    https://github.com/Fulgora/sts_launch     **".
 PRINT "**************************************************".
-PRINT " ".
 PRINT " ".
 
 // ******************************************************************** //
@@ -23,8 +22,19 @@ PRINT " ".
 // trying to hit a launch window very precisely.
 // Note: currenly NO auto-warp to launch is implemented!
 // Default is False
-SET use_launch_time TO False.
-SET launch_time TO TIMESTAMP(0,321,5,8,0).
+SET use_launch_time TO True.
+SET launch_time TO TIMESTAMP(0,348,3,9,40).
+
+// If using simple staging the stage separations will use the configuration
+// that was set up ingame in the VAB. If this is set to False the script will
+// collect the parts that are relevant for staging (engines, decouplers, sepatrons)
+// at the start and then trigger their staging actions "one" by "one".
+// The latter only works with my STS v4 design but has the benefit that it can be
+// executed for crafts that are currently not in focus/active opposed to the
+// "space bar" staging which only works with the active craft. This is the feature
+// I use to launch multiple shuttle stacks at once to orbit ;-).
+// Default is True
+SET simple_staging TO False.
 
 // Target altitude in m to start first gravity turn (90 -> 45°)
 // Default for max payload is 500
@@ -60,19 +70,32 @@ SET inclination TO 0.
 // *** SCRIPT - DO NOT MODIFY UNLESS YOU KNOW WHAT YOU ARE DOING ;) *** //
 // ******************************************************************** //
 
-// Collect staging information for stage 0.
-SET stage_0_engines TO get_stage_0_engines().
-SET stage_0_separators TO get_stage_0_separators().
-SET stage_0_clamps TO get_stage_0_clamps().
-SET stage_1_engines TO get_stage_0_engines().
-SET stage_1_separators TO get_stage_1_separators().
-SET stage_1_dropped TO False.
+if simple_staging = False {
+    PRINT "Parsing ship parts for stage caching...".
+    PRINT "0 %" AT (42,13).
+    // Collect staging information for stage 0 and 1.
+    SET stage_0_engines TO get_stage_0_engines().
+    PRINT "16.7 %" AT (42,13).
+    SET stage_0_separators TO get_stage_0_separators().
+    PRINT "33.3 %" AT (42,13).
+    SET stage_0_clamps TO get_stage_0_clamps().
+    PRINT "50.0 %" AT (42,13).
+    SET stage_1_engines TO get_stage_1_engines().
+    PRINT "66.7 %" AT (42,13).
+    SET stage_1_separators TO get_stage_1_separators().
+    PRINT "83.3 %" AT (42,13).
+    SET stage_1_dropped TO False.
 
-// Get ships solid fuel resource object for stage 1 calculations
-FOR RES IN SHIP:RESOURCES {
-    IF RES:NAME = "solidfuel" {
-        SET solid_fuel_resource TO RES.
+    // Get ships solid fuel resource object for stage 1 calculations
+    FOR RES IN SHIP:RESOURCES {
+        IF RES:NAME = "solidfuel" {
+            SET solid_fuel_resource TO RES.
+        }
     }
+    PRINT "100 % " AT (42,13).
+
+} else {
+    PRINT " ".
 }
 
 SET countdown_start TO 10.
@@ -91,6 +114,7 @@ FROM {local countdown is countdown_start.} UNTIL countdown = 0 STEP {SET countdo
     PRINT countdown + " " AT (17,16).
     WAIT 1. // pauses the script here for 1 second.
 }
+
 PRINT 0 + " " AT (17,16).
 WAIT 0.2.
 
@@ -114,6 +138,8 @@ if(bellyUp) {
 SET max_thrust_tmp TO SHIP:MAXTHRUST.
 
 SET launch_height TO SHIP:ALTITUDE.
+
+BRAKES OFF.
 
 UNTIL (SHIP:ALTITUDE > gravity_turn_1) {
     getDiffFacePrograde(up + R(0,0,launch_face) + R(0,0,0)).
@@ -174,6 +200,9 @@ SET prev_diff TO -1.
 SET last_time_to_apo_1 TO ETA:Apoapsis.
 SET last_time_to_apo_2 TO ETA:Apoapsis.
 SET low_trust_compensation TO 0.
+SET current_throttle TO 1.0.
+SET safe_twr TO False.
+SET target_eta_to_apoapsis TO 10.
 UNTIL SHIP:APOAPSIS >= max_apoapsis {
     PRINT round(SHIP:ANGULARMOMENTUM:x,1) + " - " + round(ang_momentum_avg,1) AT (10,33).
     SET distance_to_ground TO (SHIP:APOAPSIS - start_alt).
@@ -264,40 +293,78 @@ UNTIL SHIP:APOAPSIS >= max_apoapsis {
     SET prev_ang_momentum TO ABS(SHIP:ANGULARMOMENTUM:x).
 
     SET max_thrust_tmp TO SHIP:MAXTHRUST.
-}
 
-PRINT "Gravity turn complete.".
+    // Reduce thrust if we are almost in orbit and have excess thrust to get a nice(r) orbit injection
+    // Basically this does the following:
+    // If the shuttle has reached the point where under full thrust it can push the Apoapsis it will
+    // reduce thrust until time to apoapsis < 10 seconds. After reaching this point it will hold
+    // the time to apopsis constantly around 10 seconds until orbit insertion is complete and then
+    // boot the apoapsis to the target altitude.
+    PRINT "Throttle: " + MIN((CEILING(current_throttle * 100) + 1), 100) + " " AT (0,29).
+    if(ETA:Apoapsis < target_eta_to_apoapsis OR (SHIP:PERIAPSIS > 70000 AND SHIP:APOAPSIS < 0.8 * max_apoapsis)) {
+        PRINT "% (+)" AT (13,29).
+        SET current_throttle TO MIN(current_throttle * 1.01, 1.0).        
+    } else if(stage_1_dropped AND ETA:Apoapsis > target_eta_to_apoapsis AND SHIP:APOAPSIS > 70000 AND
+        (
+            (safe_twr = True AND (last_time_to_apo_1 - last_time_to_apo_2) > -0.07)) OR
+            (safe_twr = False AND (last_time_to_apo_2 - last_time_to_apo_1) < 0.06
+        )
+    ) {
+        PRINT "% (-)" AT (13,29).
+        SET safe_twr TO True.
+        // Reduce thrust before reaching target apoapsis to ensure hitting it as close as possible
+        // Otherwise limit throtteling to 50%
+        if (SHIP:APOAPSIS < 0.8 * max_apoapsis) {
+            SET current_throttle TO MAX(current_throttle * 0.985, 0.5).
+        } else if (SHIP:APOAPSIS > 0.99 * max_apoapsis) {
+            SET current_throttle TO 0.1.
+        } else if (SHIP:APOAPSIS > 0.8 * max_apoapsis) {
+            SET current_throttle TO MAX((1 - (((100 / max_apoapsis) * SHIP:APOAPSIS) / 100)) * 1.5, 0.02).
+        }       
+    } else {
+        PRINT "% (o)" AT (13,29).
+    }
+    SET current_throttle_tmp TO (CEILING(current_throttle * 100) + 1) / 100.
+    if (safe_twr AND stage_1_dropped AND ETA:Apoapsis < target_eta_to_apoapsis AND target_eta_to_apoapsis > 5 AND last_time_to_apo_1 < last_time_to_apo_2 ) {
+        SET target_eta_to_apoapsis TO ETA:Apoapsis.
+    }
+
+    LOCK THROTTLE TO current_throttle_tmp.
+}
 
 LOCK THROTTLE TO 0.
 SET SHIP:CONTROL:PILOTMAINTHROTTLE TO 0.
 SAS ON.
 
-WAIT 3.
+PRINT "Gravity turn complete.".
+
+create_circ_node(max_apoapsis).
+
+WAIT 5.
 
 CLEARSCREEN.
 
 PRINT "**************************************************".
 PRINT "**                                              **".
-IF SHIP:PERIAPSIS > 70000 {
-    PRINT "**            >>> Orbit achieved <<<            **".
-    //PRINT "**                                              **".
-    IF apo_peri_distance > 1000 {
-        PRINT "**          Please circularise on your own         **".
-        //PRINT "**                                              **".
-    }
+if SHIP:PERIAPSIS > 70000 {
     PRINT "**                                              **".
-}
-IF SHIP:APOAPSIS >= max_apoapsis {
-    PRINT "**       Target maximum apoapsis reached        **".
-    //PRINT "**                                              **".
-}
-
-IF SHIP:PERIAPSIS < 70000 {
+    PRINT "**            >>> Orbit achieved <<<            **".
+    PRINT "**                                              **".
+} else {
     PRINT "**                                              **".
     PRINT "**        >>> COULD NOT REACH ORBIT <<<         **".
     PRINT "**                                              **".
 }
-
+if (ABS(SHIP:APOAPSIS - max_apoapsis) < 100) {
+    PRINT "**                                              **".
+    PRINT "**       Target maximum apoapsis reached        **".
+    PRINT "**                                              **".
+} else {
+    PRINT "**                                              **".
+    PRINT "**     Apoapsis: " + FLOOR(SHIP:APOAPSIS) + "m (target: " + max_apoapsis + "m)".
+    PRINT "**" AT (48,6).
+    PRINT "**                                              **".
+}
 PRINT "**                                              **".
 PRINT "**                                              **".
 PRINT "**                                              **".
@@ -319,7 +386,7 @@ PRINT "**               ,'   | R |   '.                **".
 PRINT "**             ,' |   | A |   | `.              **".
 PRINT "**           .'___|___|_ _|___|___'.            **".
 PRINT "**                 /_\ /_\ /_\                  **".
-PRINT "**            STS Launch-script v0.3            **".
+PRINT "**            STS Launch-script v0.4            **".
 PRINT "**                                              **".
 PRINT "**    https://github.com/Fulgora/sts_launch     **".
 PRINT "**************************************************".
@@ -595,9 +662,9 @@ declare function stage_0
     FOR P in stage_0_separators {
         P:DOACTION("decouple", True).
     }
-    FOR P in stage_0_clamps {
-        P:DOACTION("release clamp", True).
-    }
+    //FOR P in stage_0_clamps {
+    //    P:DOACTION("release clamp", True).
+    //}
 }
 
 declare function stage_1
@@ -609,4 +676,41 @@ declare function stage_1
     FOR P in stage_1_separators {
         P:DOACTION("decouple", True).
     }
+}
+
+
+// The function below has been written by Reddit user u/kjnicoletti
+// https://www.reddit.com/r/Kos/comments/5rp0w5/comment/ddjbqqr/?utm_source=share&utm_medium=web2x&context=3
+declare function create_circ_node {
+
+	// create maneuver node to circularize orbit after initial ascent
+	
+	PARAMETER targetOrbit.
+	
+	// calculate surface gravity
+	// SurfaceGravity = GravitationalConstant * MassOfBody / RadiusOfBody^2
+	// (GravitationalConstant * MassOfBody) is also known as the Gravitational Parameter - available in kOS as BODY:MU
+	LOCAL srfcGravity IS ( BODY:MU/BODY:RADIUS^2 ).
+
+	// calculate orbital speed for desired orbit
+	// OrbitalSpeed = RadiusOfBody x SQRT ( Surface Gravity / ( Radius Of Body + Desired Orbit) )
+	LOCAL orbitalSpeed IS ( BODY:RADIUS * SQRT(srfcGravity/(BODY:RADIUS+targetOrbit)) ).
+
+	// calculate speed at current apoapsis
+	// SpeedAtApoapsis = SQRT ( GravitationalConstant * MassOfBody * ( 2/RadiusOfShipsOrbit - 1/SemiMajorAxisOfShipsOrbit ) )
+	// (GravitationalConstant * MassOfBody) is also known as the Gravitational Parameter - available in kOS as BODY:MU
+	LOCAL speedAtApo IS SQRT ( BODY:MU * ( 2/(BODY:RADIUS+SHIP:APOAPSIS) - 1/SHIP:ORBIT:SEMIMAJORAXIS ) ).
+
+	// calculate deltaV required to circularize
+	// {deltaV to Circularize} = {Orbital Speed of Desired Orbit} - {Speed at Apoapsis of Current Orbit}
+	LOCAL dvCirc IS orbitalSpeed-speedAtApo.
+
+	// create maneuver node to circularize orbit
+	LOCAL circNode IS NODE ( TIME:SECONDS+ETA:APOAPSIS, 0, 0, dvCirc).
+	ADD circNode.
+	
+	PRINT "Circularization maneuver node created.".
+
+	RETURN circNode.
+	
 }
